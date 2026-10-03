@@ -695,7 +695,7 @@ class StarfieldSaveHeader(_ABcpsSaveHeader, _AEslSaveHeader):
         'raceEid', 'pcSex', 'pcExp', 'pcLvlExp', 'filetime', 'unknown3',
         '_formVersion', 'game_ver', 'other_game_ver', '_padding',
         *_ABcpsSaveHeader._bcps_unpackers, '_master_info_block_size',
-        '_bcps_rest', 'plugin_info_unknown1', 'plugin_info_unknown2')
+        '_bcps_rest')
     _unpackers = {
         'header_size':      (00, unpack_int),
         'engineVersion':    (00, unpack_int),
@@ -720,9 +720,7 @@ class StarfieldSaveHeader(_ABcpsSaveHeader, _AEslSaveHeader):
         # to not change when the game version is upgraded
         'other_game_ver':   (00, unpack_str16),
         **SaveFileHeader._unpackers_post_ss,
-        'plugin_info_size': (00, unpack_short), # pluginInfoSize
-        'plugin_info_unknown1':  (00, unpack_byte),
-        'plugin_info_unknown2':  (00, unpack_byte),
+        'plugin_info_size': (00, unpack_int), # pluginInfoSize
     }
     _masters_offset = 2
 
