@@ -677,14 +677,50 @@ class _ABcpsSaveHeader(SaveFileHeader):
                                   f'{bcps_magic!r} (expected '
                                   f'{self.__class__._bcps_magic!r})')
         self._load_from_unpackers(ins, self.__class__._bcps_unpackers)
-        self._bcps_rest = ins.read(self._bcps_comp_location - ins.tell())
-        # We're at _bcps_comp_location now, no need to store that twice
+        header_end = ins.tell()
         ins.seek(0, os.SEEK_END)
         ins_size = ins.tell()
-        ins.seek(self._bcps_comp_location)
-        ins = _SaveCompressionType.ZLIB.decompress_save(ins,
-            ins_size - self._bcps_comp_location, self._bcps_decomp_size)
-        super().load_header(ins, load_image)
+        # These fields describe total output and output per chunk respectively.
+        total_output = self._bcps_unknown2
+        chunk_output = self._bcps_decomp_size
+        if not (total_output > 0 and chunk_output > 0 and
+                72 <= self._bcps_chunkSizesOffset <=
+                self._bcps_comp_location <= ins_size):
+            raise SaveHeaderError('Invalid BCPS chunk layout.')
+        chunk_count = (total_output + chunk_output - 1) // chunk_output
+        if chunk_count > (self._bcps_comp_location -
+                self._bcps_chunkSizesOffset) // 4:
+            raise SaveHeaderError('BCPS chunk table overlaps compressed data.')
+        ins.seek(header_end)
+        alignment = unpack_int64(ins)
+        unpack_int(ins) # unknown
+        codec = ins.read(4)
+        if not alignment or alignment & (alignment - 1) or codec != b'ZIP ':
+            raise SaveHeaderError('Unsupported BCPS alignment or codec.')
+        ins.seek(header_end)
+        self._bcps_rest = ins.read(self._bcps_comp_location - header_end)
+        ins.seek(self._bcps_chunkSizesOffset)
+        chunk_sizes = [unpack_int(ins) for __ in range(chunk_count)]
+        chunk_start = self._bcps_comp_location
+        decompressed = io.BytesIO()
+        for stored_size in chunk_sizes:
+            if not stored_size or chunk_start + stored_size > ins_size:
+                raise SaveHeaderError('BCPS chunk extends beyond the file.')
+            ins.seek(chunk_start)
+            expected_output = min(chunk_output,
+                total_output - decompressed.tell())
+            inflater = zlib.decompressobj()
+            try:
+                chunk_bytes = inflater.decompress(ins.read(stored_size),
+                    expected_output + 1)
+            except zlib.error as exc:
+                raise SaveHeaderError(f'Invalid BCPS chunk: {exc}') from exc
+            if len(chunk_bytes) != expected_output or not inflater.eof:
+                raise SaveHeaderError('BCPS chunk output size mismatch.')
+            decompressed.write(chunk_bytes)
+            chunk_start += (stored_size + alignment - 1) & -alignment
+        decompressed.seek(0)
+        super().load_header(decompressed, load_image)
 
     ##: Add writing support
 
